@@ -1,0 +1,41 @@
+# this file is generated from the template at container start
+worker_processes  1;
+events { worker_connections 1024; }
+
+http {
+    include       mime.types;
+    default_type  application/octet-stream;
+
+    # Upstream backend — primary and backup (backup marked with 'backup' keyword)
+    upstream app_backend {
+        # primary server (templated)
+        server ${PRIMARY_NAME}:$PORT max_fails=2 fail_timeout=5s;
+        # backup server
+        server ${BACKUP_NAME}:$PORT backup;
+    }
+
+    server {
+        listen 80;
+        server_name _;
+
+        # Tight timeouts to detect failures quickly
+        proxy_connect_timeout 1s;
+        proxy_send_timeout 5s;
+        proxy_read_timeout 5s;
+
+        # Retry policy: retry on error, timeout, and http 5xx
+        proxy_next_upstream error timeout http_500 http_502 http_503 http_504;
+        # Make sure retry happens quickly — allow one try to backup
+        proxy_next_upstream_tries 2;
+        proxy_next_upstream_timeout 6s;
+
+        location / {
+            proxy_pass http://app_backend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            # Preserve all upstream response headers — do NOT hide app headers
+            # (so X-App-Pool and X-Release-Id will be forwarded as-is)
+        }
+    }
+}
